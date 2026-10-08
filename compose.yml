@@ -38,12 +38,48 @@ services:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./alerts:/etc/prometheus/alerts:ro
       - prometheus-data:/prometheus
-
-
-
-
+  node-exporter:
+    image: prom/node-exporter:v1.9.1
+    restart: unless-stopped
+    pid: host
+    command:
+      - --path.rootfs=/host
+    volumes:
+      - /:/host:ro,rslave
+  cadvisor:
+    image: ghcr.io/google/cadvisor:v0.53.0
+    restart: unless-stopped
+    privileged: true
+    devices:
+      - /dev/kmsg
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker:/var/lib/docker:ro
+      - /dev/disk:/dev/disk:ro
+  alloy:
+    image: grafana/alloy:v1.10.2
+    restart: unless-stopped
+    command:
+      - run
+      - /etc/alloy/config.alloy
+      - --server.http.listen-addr=0.0.0.0:12345
+      - --disable-reporting
+    volumes:
+      - ./config/config.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+  loki:
+    image: grafana/loki:3.5.3
+    restart: unless-stopped
+    ports:
+      - "${LOKI_PORT}:3100"
+    command: -config.file=/etc/loki/config.yml
+    volumes:
+      - ./loki-config.yml:/etc/loki/config.yml:ro
+      - loki-data:/loki
 
 volumes:
   grafana-data:
   prometheus-data:
-
+  loki-data:

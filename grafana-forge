@@ -489,33 +489,128 @@ backup(){
   tar -czf "$out" --exclude='.state/*.tar.gz' --exclude='.git' -- .env compose.yml prometheus.yml loki-config.yml config dashboards provisioning alerts 2>/dev/null || true
   printf '%s\n' "$out"
 }
-fix_cmd() {
-    log "Grafana Forge AutoFix"
+fix_cmd(){
+  need docker
+  docker compose version >/dev/null 2>&1 || {
+    err "Docker Compose v2 is required."
+    return 1
+  }
 
-    log "Regenerating configuration"
-    render
+  local hard=false
 
-    log "Validating generated Compose configuration"
-    if ! docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" config >/dev/null; then
-        echo
-        echo "[FAIL] Generated Compose configuration is invalid."
-        echo
-        echo "Run:"
-        echo "  ./grafana-forge debug"
-        return 1
+  if [[ "${2:-}" == "--hard" ]]; then
+    hard=true
+  fi
+
+  log "Grafana Forge AutoFix"
+
+  if "$hard"; then
+    printf '%s\n' '────────────────────────────────────────'
+    log "HARD RESET REQUESTED"
+    log "Stopping and removing the existing stack..."
+
+    if [[ -f "$COMPOSE_FILE" && -f "$ENV_FILE" ]]; then
+      docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" \
+        down -v --remove-orphans 2>/dev/null || true
     fi
 
-    log "Pulling required images"
-    docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" pull
+    rm -rf \
+      "$ENV_FILE" \
+      "$COMPOSE_FILE" \
+      "$ROOT/prometheus.yml" \
+      "$ROOT/loki-config.yml" \
+      "$ROOT/config" \
+      "$ROOT/alerts" \
+      "$ROOT/dashboards" \
+      "$ROOT/provisioning"
 
-    log "Starting/recreating services"
-    docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" up -d --force-recreate
+    mkdir -p "$STATE_DIR"
 
-    log "Waiting for services"
-    sleep 5
+    log "Detecting profiles..."
+    parse_profiles
+  else
+    printf '%s\n' '────────────────────────────────────────'
+    log "Regenerating configuration..."
 
-    log "Running diagnostics"
-    doctor
+    if [[ -f "$STATE_DIR/profiles" ]]; then
+      # shellcheck disable=SC2207
+      PROFILES=($(cat "$STATE_DIR/profiles"))
+    else
+      parse_profiles
+    fi
+  fi
+
+  render
+
+  printf '%s\n' '────────────────────────────────────────'
+  log "Validating Compose configuration..."
+
+  if ! compose_config; then
+    err "Generated Compose configuration is invalid."
+    debug
+    return 1
+  fi
+
+  printf '%s\n' '────────────────────────────────────────'
+  log "Pulling required images..."
+
+  docker compose \
+    -f "$COMPOSE_FILE" \
+    --env-file "$ENV_FILE" \
+    pull
+
+  printf '%s\n' '────────────────────────────────────────'
+  log "Starting/recreating services..."
+
+  docker compose \
+    -f "$COMPOSE_FILE" \
+    --env-file "$ENV_FILE" \
+    up -d --force-recreate --remove-orphans
+
+  printf '%s\n' '────────────────────────────────────────'
+  log "Waiting for services..."
+
+  if wait_http "http://127.0.0.1:${PROMETHEUS_PORT}/-/ready" 30; then
+    printf '[PASS] %-28s\n' "Prometheus ready"
+  else
+    printf '[FAIL] %-28s\n' "Prometheus ready"
+  fi
+
+  if wait_http "http://127.0.0.1:${GRAFANA_PORT}/api/health" 30; then
+    printf '[PASS] %-28s\n' "Grafana ready"
+  else
+    printf '[FAIL] %-28s\n' "Grafana ready"
+  fi
+
+  if has_profile logs; then
+    if wait_http "http://127.0.0.1:${LOKI_PORT}/ready" 30; then
+      printf '[PASS] %-28s\n' "Loki ready"
+    else
+      printf '[FAIL] %-28s\n' "Loki ready"
+    fi
+  fi
+
+  printf '%s\n' '────────────────────────────────────────'
+  log "Running final diagnostics..."
+
+  if doctor; then
+    printf '%s\n' '────────────────────────────────────────'
+    log "Grafana Forge is HEALTHY."
+    urls
+    return 0
+  fi
+
+  printf '%s\n' '────────────────────────────────────────'
+  err "AutoFix could not make the stack healthy."
+
+  printf '\n'
+  printf 'Diagnostic commands:\n'
+  printf '  ./grafana-forge doctor\n'
+  printf '  ./grafana-forge debug\n'
+  printf '  ./grafana-forge status\n'
+  printf '  ./grafana-forge logs <service>\n'
+
+  return 1
 }
 reset(){
   need docker
@@ -526,26 +621,62 @@ reset(){
 }
 
 case "${1:-}" in
-    "")
-        up_cmd
-        ;;
-    up)
-        up_cmd
-        ;;
-    doctor)
-        doctor_cmd
-        ;;
-    fix)
-        fix_cmd
-        ;;
-    repair)
-        repair_cmd "${2:-}"
-        ;;
-    backup)
-        backup_cmd
-        ;;
-    *)
-        usage
-        exit 1
-        ;;
+  "")
+    up
+    ;;
+
+  up)
+    shift
+    up "$@"
+    ;;
+
+  status)
+    status
+    ;;
+
+  urls)
+    urls
+    ;;
+
+  doctor)
+    doctor
+    ;;
+
+  debug)
+    shift
+    debug "${1:-}"
+    ;;
+
+  config)
+    config
+    ;;
+
+  fix)
+    fix_cmd "$@"
+    ;;
+
+  repair)
+    repair "${2:-}"
+    ;;
+
+  logs)
+    logs_cmd "${2:-}"
+    ;;
+
+  backup)
+    backup
+    ;;
+
+  down)
+    down
+    ;;
+
+  reset)
+    reset
+    ;;
+
+  *)
+    usage
+    exit 1
+    ;;
 esac
