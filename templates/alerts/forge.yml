@@ -1,0 +1,43 @@
+groups:
+  - name: grafana-forge
+    rules:
+      - alert: ForgeTargetDown
+        expr: up == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Prometheus target is down"
+          description: "{{ $labels.job }} / {{ $labels.instance }} has been unavailable for more than 2 minutes."
+      - alert: ForgeHighCPU
+        expr: 100 - (avg by(instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 90
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High CPU usage"
+          description: "CPU usage is above 90% for 10 minutes."
+      - alert: ForgeHighMemory
+        expr: 100 * (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) > 90
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High memory usage"
+          description: "Memory usage is above 90% for 10 minutes."
+      - alert: ForgeLowDiskSpace
+        expr: 100 * node_filesystem_avail_bytes{fstype!~"tmpfs|overlay"} / node_filesystem_size_bytes{fstype!~"tmpfs|overlay"} < 10
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Low filesystem space"
+          description: "A filesystem has less than 10% free space."
+      - alert: ForgeContainerRestarting
+        expr: increase(container_start_time_seconds[10m]) > 1
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Container restarted"
+          description: "A Docker container appears to have restarted during the last 10 minutes."

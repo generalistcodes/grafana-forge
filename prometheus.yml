@@ -1,0 +1,9 @@
+global:
+  scrape_interval: ${FORGE_SCRAPE_INTERVAL}
+  evaluation_interval: ${FORGE_SCRAPE_INTERVAL}
+rule_files:
+  - /etc/prometheus/alerts/*.yml
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ['prometheus:9090']
